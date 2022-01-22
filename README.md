@@ -2,6 +2,9 @@
 
 A quick solver for the popular game Wordle found at https://www.powerlanguage.co.uk/wordle/
 
+You can test against past wordles of previous days by using the wayback machine
+Eg: https://web.archive.org/web/20220107202803/https://www.powerlanguage.co.uk/wordle/
+
 It will analyze the set of valid scrabble words and find the guess that best narrows down the remaining possibilities
 
 After you enter the prompted guess, enter the response to the guess (the output of what is displayed in wordle)
