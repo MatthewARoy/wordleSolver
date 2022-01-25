@@ -1,16 +1,16 @@
-from english_words import english_words_lower_set
-from scrabble_words import scrabble_words
-from enum import IntEnum
+from knowledge import knowledge
+from constants import possible_words, guessable_words, LetterResult
 
-# CONSTANTS
-with open("Collins Scrabble Words (2019).txt") as f:
-    scrabble_file_words = f.read().split()
-five_letter_words = [word for word in scrabble_file_words if len(word) == 5]
-class LetterResult(IntEnum):
-    EXCLUDED = 0
-    WRONG_LOCATION = 1
-    CORRECT = 2
+# Constants
+vowel_multiplier = 1
+debug = False
+possible_words_set = set(possible_words)
+guessable_words_set = set(guessable_words)
 
+
+########################################################################################################################
+# Building Guess Models
+########################################################################################################################
 def build_letter_placement_dict(word_list):
     letter_placement_dict = {
         0: {},
@@ -19,108 +19,162 @@ def build_letter_placement_dict(word_list):
         3: {},
         4: {}
     }
+    letters_in_word = {}
+
     for word in word_list:
+        for letter in set(word):
+            letters_in_word[letter] = letters_in_word.get(letter, 0) + 1
         for i, letter in enumerate(word):
             letter_placement_dict[i][letter] = letter_placement_dict[i].get(letter, 0) + 1
 
-    for k,v in letter_placement_dict.items():
-        print("Letter scoring: ", sorted(letter_placement_dict[k].items(), key=lambda x: x[1], reverse=True)[:5])
+    for k, v in letter_placement_dict.items():
+        if debug: print("Letter scoring: ",
+                        sorted(letter_placement_dict[k].items(), key=lambda x: x[1], reverse=True)[:5])
+    if debug: print("Total letter scoring: ", sorted(letters_in_word.items(), key=lambda x: x[1], reverse=True)[:10])
 
     return letter_placement_dict
 
+
 def score_word_guesses(word_list, letter_placement_dict):
     word_score_dict = {}
-    vowels = ['A', 'E', 'I', 'O', 'U']
-    vowel_bonus = 1.2
-
-    
+    vowels = ['a', 'e', 'i', 'o', 'u']
 
     for word in word_list:
         score = 0
         for i, letter in enumerate(word):
-            letter_score = letter_placement_dict[i][letter]
-            # incentivize vowels
-            if vowels.__contains__(letter):
-                letter_score = letter_score * vowel_bonus
-            score += letter_score
+            tiebreaker = int.from_bytes(word.encode('utf-8'), 'little') / 1e14
+            score += letter_placement_dict[i].get(letter, 0) * (
+                vowel_multiplier if letter in vowels else 1) + tiebreaker
         # disincentivize words with duplicate letters
         word_score_dict[word] = score * len(set(word)) / len(word)
 
-    print("Best guesses: ", sorted(word_score_dict.items(), key=lambda x: x[1], reverse=True)[:5])
     return word_score_dict
 
-def update_known_information(word, result, known_word, excluded_letters, included_letters_wrong_location):
-    for i,letter in enumerate(word):
-        value = int(result[i])
-        if value == LetterResult.CORRECT:
-            known_word[i] = letter
-            # get rid of bug when letter is in word but not that location
-            if letter in excluded_letters:
-                excluded_letters.remove(letter)
-        elif value == LetterResult.EXCLUDED:
-            if letter not in known_word:
-                excluded_letters.add(letter)
-        elif value == LetterResult.WRONG_LOCATION:
-            if letter in included_letters_wrong_location:
-                included_letters_wrong_location[letter].add(i)
-            else:
-                included_letters_wrong_location[letter] = {i}
+
+def find_remaining_valid_words_from_guess(guess, possible_words, guessable_words):
+    score = 0
+    for answer in possible_words:
+        known_info = knowledge()
+        known_info.update_guess(guess, wordle_guess_result(guess, answer))
+        filtered_words = known_info.filter_possible_words(possible_words)
+        score += len(filtered_words)
+    percent_reduction = 1 - score / (len(possible_words) * len(possible_words))  # would include guessable words too
+    print(guess, score, percent_reduction)
+    return percent_reduction
+
+
+########################################################################################################################
+# I/O functions
+########################################################################################################################
+def print_instructions():
+    print("Input a string for a guess, or press enter to use first recommended guess")
+    print("Response is in form of a list of LetterResult, where LetterResult is one of:", LetterResult)
+
+
+# Different guessing and answer methodologies
+def user_guess_function(valid_words, valid_guessable_words, *args):
+    best_guesses = sorted(
+        score_word_guesses(valid_guessable_words.union(valid_words),
+                           build_letter_placement_dict(valid_words)).items(),
+        key=lambda x: x[1], reverse=True)
+    print(f"{len(valid_words)} words remaining, recommended guesses are: ", best_guesses[:5])
+    return input(f"Guess (default: {best_guesses[0][0]}): ") or best_guesses[0][0]
+
+
+def best_guess_function(valid_words, valid_guessable_words, *args):
+    return sorted(
+        score_word_guesses(valid_guessable_words.union(valid_words),
+                           build_letter_placement_dict(valid_words)).items(),
+        key=lambda x: x[1], reverse=True)[0][0]
+
+
+def user_result_function(guess, guessable_words, *args):
+    return input(f"Guess result of guess {guess}: ")
+
+
+def known_word_result_function(guess, *args):
+    known_word = args[0][0]
+    return wordle_guess_result(guess, known_word)
+
+
+def wordle_guess_result(guess, word):
+    result = []
+    for i, letter in enumerate(guess):
+        if letter == word[i]:
+            result.append(LetterResult.CORRECT)
+        # need to handle case where letter is already guessed
+        elif letter in word:
+            result.append(LetterResult.WRONG_LOCATION)
         else:
-            raise ValueError("Invalid letter result, check yo input dawg")
+            result.append(LetterResult.EXCLUDED)
+    return result
 
-    return known_word, excluded_letters, included_letters_wrong_location
 
-def is_possible_word(word, known_word, excluded_letters, included_letters_wrong_location):
-    for i, letter in enumerate(word):
-        if (letter in excluded_letters) or (letter in included_letters_wrong_location and i in included_letters_wrong_location[letter]):
-            return False
-        if known_word[i] is not None and letter != known_word[i]:
-            return False
-    for known_letter in included_letters_wrong_location.keys():
-        if not word.__contains__(known_letter):
-            return False
-    return True
+########################################################################################################################
+# Performance Testing
+########################################################################################################################
 
-def filter_words(word_list, excluded_letters, included_letters_wrong_location, known_word):
-    return [word for word in word_list.copy() if is_possible_word(word, known_word, excluded_letters, included_letters_wrong_location)]
+# Iterate over all possible words and determine average algorithm score
+def score_algorithm():
+    possible_words = possible_words_set.copy()
+    res = []
+    for i, word in enumerate(possible_words):
+        if i % 100 == 0: print(f"Currently at {i}/{len(possible_words)} testing {word}")
+        res = res + [solve_word(best_guess_function, known_word_result_function, word)]
 
-def find_word():
-    debug = True
-    my_guess = [None]*5
-    possible_words = five_letter_words.copy()
+    print("Algorithm performance was ", (sum(res) / len(res)))
+
+
+def find_theoretical_best_first_guess():
+    # multithread didn't seem to operate faster, will look into it later
+    # pool = mp.Pool(mp.cpu_count())
+    # scores = [pool.apply_async(find_remaining_valid_words_from_guess, args=(word, possible_words_set, guessable_words_set)) for word in possible_words_set]
+    # pool.close()
+    scores_sorted = find_theoretical_best_guess(possible_words_set, guessable_words_set)
+    print("Theoretical best guess is ", scores_sorted[0], scores_sorted[0][1])
+    print(scores_sorted)
+    return scores_sorted[0]
+
+
+# Calculate all possible guesses for all possible valid answers
+def find_theoretical_best_guess(subset_possible_words, subset_guessable_words):
+    scores = {}
+    for guess in subset_possible_words:  # + guessable_words:
+        scores[guess] = find_remaining_valid_words_from_guess(guess, subset_possible_words, subset_guessable_words)
+    scores_sorted = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    print("Theoretical best guess is ", scores_sorted[0], scores_sorted[0][1])
+    print(scores_sorted)
+    return scores_sorted
+
+
+########################################################################################################################
+# Solver
+########################################################################################################################
+# solve a word from scratch using a function that gives result for each attempt, output is number of attempts to solve
+def solve_word(guess_function, result_function, *args):
+    known_information = knowledge()
+    known_letters = known_information.get_known_letters()
+    possible_words = possible_words_set.copy()
+    guessable_words = guessable_words_set.copy()
     guess_counter = 0
-    excluded_letters = set()
-    # map of included letters to their not possible locations
-    included_letters_wrong_location = {}
-    while my_guess.__contains__(None) and guess_counter < 6 and len(possible_words) > 0:
-        possible_words = filter_words(possible_words, excluded_letters, included_letters_wrong_location, my_guess)
-        if (debug):
-            print("Guess: ", my_guess)
-            print("Excluded Letters: ", excluded_letters)
-            print("Included Letters Wrong Location: ", included_letters_wrong_location)
-            print("Total Possible Words: ", len(possible_words))
+    print_instructions()
+
+    while None in known_letters and len(possible_words) > 0:
+        # Make a guess
+        my_guess = guess_function(possible_words, guessable_words, args)
+        result = result_function(my_guess, args)
+
+        # Update information
         guess_counter += 1
-        if len(possible_words) == 0:
-            print("Something went wrong! No possible words left!")
-            return
-        best_guesses = sorted(score_word_guesses(possible_words, build_letter_placement_dict(possible_words)).items(), key=lambda x: x[1], reverse=True)
-        best_guess = best_guesses[0][0]
-        result = "0"
-        current_guess = 0
-        while len(result) != 5:
-            best_guess = best_guesses[current_guess][0]
-            current_guess += 1
-            print("My best guess is: ", best_guess)
-            result = input("Guess result: ")
-        my_guess, excluded_letters, included_letters_wrong_location = update_known_information(best_guess, result, my_guess, excluded_letters, included_letters_wrong_location)
+        known_information.update_guess(my_guess, result)
+        possible_words = known_information.filter_possible_words(possible_words)
+        guessable_words = known_information.filter_possible_words(guessable_words)
+    return guess_counter
 
-    print(my_guess)
-
-
-
-def testing_framework():
-    actualWord = input("Enter a word: ")
-    # test how much a guess reduced the number of possible words
 
 if __name__ == '__main__':
-    find_word()
+    # score_algorithm()
+    # find_theoretical_best_first_guess()
+    # find_remaining_valid_words_from_guess("salet", possible_words_set, guessable_words_set)
+    solve_word(user_guess_function, user_result_function)
+    # find_theoretical_best_first_guess()
