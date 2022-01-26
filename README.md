@@ -1,6 +1,7 @@
-# wordleSolver
+# Wordle Solver
 
 A quick solver for the popular game Wordle found at https://www.powerlanguage.co.uk/wordle/
+This can provide wordle hints in the form of guesses, it can provide Wordle help in the form of all remaining possible words, or it can solve a wordle fully.
 
 You can test against past wordles of previous days by using the wayback machine
 Eg: https://web.archive.org/web/20220107202803/https://www.powerlanguage.co.uk/wordle/
